@@ -1,0 +1,24 @@
+{
+  "name": "faceswapper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "FaceSwapper — 100% browser-local face swap.",
+  "type": "module",
+  "scripts": {
+    "preddev": "export PATH=\"$HOME/.cargo/bin:$PATH\" && wasm-pack build --target web --out-dir web/pkg --out-name faceswapper",
+    "dev": "npm run preddev && vite dev --config vite.config.js",
+    "prebuild": "export PATH=\"$HOME/.cargo/bin:$PATH\" && wasm-pack build --target web --release --out-dir web/pkg --out-name faceswapper",
+    "build": "vite build --config vite.config.js",
+    "preview": "vite preview --config vite.config.js",
+    "test": "export PATH=\"$HOME/.cargo/bin:$PATH\" && cargo test",
+    "fetch-models": "node tools/fetch-models.mjs",
+    "vendor-ort": "node tools/vendor-ort.mjs",
+    "extract-emap": "python3 tools/extract_emap.py --help"
+  },
+  "dependencies": {
+    "onnxruntime-web": "1.22.0"
+  },
+  "devDependencies": {
+    "vite": "^6.3.5"
+  }
+}

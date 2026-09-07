@@ -1,0 +1,64 @@
+# Deploy FaceSwapper to GitHub Pages (static, no weights in git)
+#
+# 1. Create the repo (public or private) and push this project.
+#    Large weights (*.onnx/*.zip) are gitignored by design; the 5.6 MB
+#    reswapper.emap.json IS committed (AGPL-3.0 sidecar, see
+#    public/models/EMAP-LICENSE.md), as is the manifest with remote URLs.
+# 2. Commit your source portrait (needs redistribution rights!):
+#      git add -f public/source/example.jpg
+#    (the name is gitignored by default so nobody commits one by accident)
+# 3. Repo Settings → Pages → Source: "GitHub Actions".
+# 4. Push to main. The workflow below builds (Rust/WASM + vite) and
+#    publishes dist/. First visitor load pulls weights (~730 MB) from the
+#    remote mirrors into the browser cache — pixels never leave the device.
+#
+# Notes:
+# - GitHub Pages cannot set COOP/COEP headers, so the WASM backend runs
+#   single-threaded there (handled automatically); WebGPU is unaffected.
+# - Custom domain: Settings → Pages → Custom domain,
+#   then create `public/CNAME` containing just the domain — vite copies it
+#   into dist/ on every build.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: jetli/wasm-pack-action@v0.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

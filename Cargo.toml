@@ -1,0 +1,16 @@
+[package]
+name = "faceswapper"
+version = "0.1.0"
+edition = "2021"
+description = "FaceSwapper — client-side face-swap pipeline: geometry, masking and blending core (Rust/WASM)"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "faceswapper"
+
+[dependencies]
+wasm-bindgen = "0.2"
+
+[dev-dependencies]
+# (none — unit tests use std only)

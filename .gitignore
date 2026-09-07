@@ -1,0 +1,19 @@
+target/
+dist/
+web/pkg/
+web/dist/
+node_modules/
+public/models/*.onnx
+public/models/*.zip
+public/models/*.json
+!public/models/manifest.json
+!public/models/MODELS.md
+# Exception: the emap sidecar is tiny (5.6 MB) and needed by static hosts.
+# It is AGPL-3.0 material extracted from ReSwapper weights — see EMAP-LICENSE.md.
+!public/models/reswapper.emap.json
+!public/models/EMAP-LICENSE.md
+# Source portrait: keep uncommitted by default (needs redistribution rights).
+# Commit yours explicitly with: git add -f public/source/example.jpg
+public/source/example.*
+.DS_Store
+*.log

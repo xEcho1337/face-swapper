@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FaceSwapper — Swap faces in your browser</title>
+  <meta name="description" content="FaceSwapper is a 100% browser-local face-swap experiment. Your image never leaves your device." />
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <a class="skip" href="#main">Skip to main content</a>
+
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <div class="brand" aria-label="FaceSwapper home">FaceSwapper<span class="tld">.app</span></div>
+      <nav aria-label="Site">
+        <a href="./responsible-use.html">Responsible Use</a>
+        <a href="https://github.com/" id="nav-src" rel="noopener">Source</a>
+        <button id="theme-toggle" type="button" aria-label="Toggle dark and light mode" aria-pressed="false">◐</button>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="wrap">
+    <section class="hero" aria-labelledby="hero-title">
+      <h1 id="hero-title">FaceSwapper</h1>
+      <p class="tagline">Swap any face, right in your browser. Your image never leaves this device.</p>
+      <p class="backend-line">
+        <span id="backend-badge" class="badge" aria-live="polite">…</span>
+        <span id="source-badge" class="badge" aria-live="polite">Source: …</span>
+      </p>
+    </section>
+
+    <section id="source-warning" class="warning" hidden>
+      <strong>Source portrait not installed.</strong>
+      <span id="source-warning-text">Copy a licensed portrait to <code>public/source/example.jpg</code> and rebuild/redeploy.</span>
+    </section>
+
+    <section class="panel" aria-labelledby="source-title">
+      <h2 id="source-title">1 · Source face</h2>
+      <div class="source-row">
+        <canvas id="canvas-source" width="256" height="256" role="img" aria-label="Current source face preview"></canvas>
+        <div class="source-info">
+          <p class="source-name" id="source-name">Charlie Kirk (built-in)</p>
+          <div class="actions">
+            <label class="btn" for="source-input">Upload a face</label>
+            <input id="source-input" type="file" accept="image/jpeg,image/png,image/webp,image/*" class="visually-hidden" />
+            <button id="source-reset" class="btn" type="button">Use Charlie Kirk</button>
+          </div>
+          <p class="dz-hint">Front-facing, one face, good light. Like everything else, it never leaves your device.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="upload-title">
+      <h2 id="upload-title">2 · Upload a photo</h2>
+      <div id="dropzone" class="dropzone" tabindex="0" role="button"
+           aria-label="Upload an image: drag and drop a file here, or press Enter to open the file picker">
+        <p class="dz-main">Drag &amp; drop an image here</p>
+        <p class="dz-sub">or</p>
+        <label class="btn" for="file-input">Choose a file</label>
+        <input id="file-input" type="file" accept="image/jpeg,image/png,image/webp,image/*" class="visually-hidden" />
+        <p class="dz-hint">JPEG · PNG · WebP. EXIF orientation is respected. Very large images are capped at 4096px on the long side.</p>
+      </div>
+
+      <div class="controls">
+        <label for="threshold">Face confidence threshold
+          <output id="threshold-val" for="threshold">0.50</output>
+        </label>
+        <input id="threshold" type="range" min="0.1" max="0.9" step="0.05" value="0.5" />
+        <label class="check"><input id="debug-boxes" type="checkbox" /> Show detected face boxes (debug)</label>
+      </div>
+
+      <div class="actions">
+        <button id="process-btn" class="btn primary" type="button" disabled>Detect &amp; Swap</button>
+        <button id="reset-btn" class="btn" type="button" disabled>Reset</button>
+      </div>
+
+      <ol id="progress" class="progress" aria-live="polite" aria-label="Processing status"></ol>
+
+      <div id="download-bar" class="dlbar" hidden role="progressbar"
+           aria-label="Model download progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="dlbar-fill" id="download-fill"></div>
+        <span class="dlbar-label" id="download-label"></span>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="result-title" id="result-panel" hidden>
+      <h2 id="result-title">3 · Result</h2>
+
+      <div class="compare" id="compare">
+        <canvas id="canvas-before" role="img" aria-label="Original image preview"></canvas>
+        <div class="after-wrap" id="after-wrap">
+          <canvas id="canvas-after" role="img" aria-label="Swapped result preview"></canvas>
+        </div>
+        <input id="slider" type="range" min="0" max="100" value="50" step="0.1"
+               aria-label="Before and after comparison slider: left shows original, right shows result" />
+        <span class="tag before-tag" aria-hidden="true">BEFORE</span>
+        <span class="tag after-tag" aria-hidden="true">AFTER · AI-MANIPULATED</span>
+      </div>
+
+      <p class="meta-line" id="result-meta" aria-live="polite"></p>
+
+      <div class="actions">
+        <button id="download-png" class="btn primary" type="button">Download PNG (labelled)</button>
+        <button id="download-jpg" class="btn" type="button">Download JPEG (labelled)</button>
+      </div>
+      <p class="dl-note">Downloads are stamped with a visible “AI-manipulated · FaceSwapper” mark. PNGs additionally carry machine-readable <code>tEXt</code> metadata. EU AI Act Art. 50 transparency: do not remove these marks when sharing.</p>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <p>FaceSwapper is an independent, experimental face-transformation project. It is not affiliated with, endorsed by, or sponsored by Charlie Kirk, his estate, or any organization associated with him.</p>
+      <p>All processing is client-side. Outputs are AI-manipulated imagery — labelled as such. See <a href="./responsible-use.html">Responsible Use</a>.</p>
+    </div>
+  </footer>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

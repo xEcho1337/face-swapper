@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "notes": "Model weights are NOT bundled (licensing + size). The app tries the local `path` first (same-host, private, fast) and falls back to `remote` when present — so the SAME build works for local dev (files next to this manifest) and for static hosts like GitHub Pages (no weights in the repo). Remote hosts only ever see a file download, never user pixels. `remote` files were hash-verified against the reference copies (see MODELS.md).",
+  "files": {
+    "detector": {
+      "path": "scrfd_2.5g_bnkps.onnx",
+      "remote": "https://github.com/cysin/scrfd_onnx/raw/refs/heads/main/scrfd_2.5g_bnkps.onnx",
+      "sha256": "9c162a817c7dd32d35d1f1c6ae6445032d6e73c6c5fe61d8b5b663ba8bc86b30",
+      "role": "Face detection + 5-point landmarks (SCRFD-2.5G-BNKPS).",
+      "input": { "name": "input.1", "dtype": "float32", "layout": "NCHW float32; verified fixed [1,3,640,640] on the mirrored export, dynamic exports also accepted (app always feeds a 640x640 letterbox)", "preprocessing": "RGB, (x-127.5)/128" },
+      "outputs": ["score_8/16/32", "bbox_8/16/32", "kps_8/16/32 (9 tensors; batched or unbatched)"],
+      "postprocessing": "anchor grid per stride [8,16,32] x2 anchors, distance2bbox/kps, threshold, NMS IoU 0.4 (+1px convention), /det_scale",
+      "license": "InsightFace model license (non-commercial research unless arranged; code is MIT). See MODELS.md.",
+      "expectedSizeMB": "~3.3",
+      "backend": "WebGPU preferred, WASM fallback",
+      "expectedMemoryMB": "~150"
+    },
+    "recognizer": {
+      "path": "w600k_r50.onnx",
+      "remote": "https://huggingface.co/maze/faceX/resolve/main/w600k_r50.onnx",
+      "sha256": "4c06341c33c2ca1f86781dab0e829f88ad5b64be9fba56e56bc9ebdefc619e43",
+      "role": "Source-identity embedding (ArcFace R50, buffalo_l pack).",
+      "input": { "dtype": "float32", "shape": [1, 3, 112, 112], "preprocessing": "112px norm_crop, RGB, (x-127.5)/127.5" },
+      "outputs": ["single float32 [1,512], L2-normalized"],
+      "license": "InsightFace model license (contact recognition-oss-pack@insightface.ai for licensing). See MODELS.md.",
+      "expectedSizeMB": "~174 (verified)",
+      "backend": "WebGPU preferred, WASM fallback"
+    },
+    "swapper": {
+      "path": "reswapper-1019500.onnx",
+      "remote": "https://huggingface.co/somanchiu/reswapper/resolve/main/reswapper-1019500.onnx",
+      "sha256": "744eaa30a6a3bdeb693c3c127b2c9ce6f2ea763f245b92ea71ea98b3a38b0fec",
+      "role": "Identity-conditioned face swap, 128x128 (ReSwapper, inswapper-compatible contract).",
+      "inputImage": { "dtype": "float32", "shape": [1, 3, 128, 128], "preprocessing": "128px norm_crop2, RGB, x/255" },
+      "inputLatent": { "dtype": "float32", "shape": [1, 512], "derivation": "normalize(normed_embedding @ emap)" },
+      "output": { "dtype": "float32", "shape": [1, 3, 128, 128], "range": "[0,1] RGB" },
+      "license": "AGPL-3.0 (somanchiu/ReSwapper, code + weights). Copyleft: weights installed separately by the operator, never bundled; preserve license notices. See MODELS.md.",
+      "provenance": "Author disclosure: training used inswapper outputs among its targets. Verified contract-identical to inswapper_128 (inputs target/source, output, 512x512 emap initializer, opset 11). E2E identity transfer measured 0.58-0.87 ArcFace cosine (tools/verify-swap.mjs).",
+      "expectedSizeMB": "~554",
+      "backend": "WebGPU strongly recommended; WASM works but is slow",
+      "expectedMemoryMB": "~1200"
+    },
+    "emap": {
+      "path": "reswapper.emap.json",
+      "role": "Last-initializer projection (512x512 row-major) extracted once from YOUR reswapper copy.",
+      "format": "{shape:[512,512], data:[262144 floats]}",
+      "tool": "python3 tools/extract_emap.py public/models/reswapper-1019500.onnx public/models/reswapper.emap.json"
+    }
+  }
+}
