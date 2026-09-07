@@ -205,7 +205,14 @@ async function submitSourceBlob(blob, name) {
     els.source.textContent = 'Source: error';
     pushStage(`${r.code || 'Error'}: ${r.message || ''}`, 'error');
     if ((r.code || '') === 'Model loading failed') {
-      pushStage('Setup needed: copy the model files into public/models/ (see public/models/MODELS.md, or run: node tools/fetch-models.mjs) and reload/rebuild.', 'error');
+      const host = location.hostname || '';
+      const isLocalDev = host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+      pushStage(
+        isLocalDev
+          ? 'Setup needed: copy the model files into public/models/ (see public/models/MODELS.md, or run: node tools/fetch-models.mjs) and reload/rebuild.'
+          : 'The model download from the remote mirror failed (network, ad-blocker, or browser cache). Reload the page to retry — the download resumes into the on-device cache. If it persists, open DevTools console for the failing URL.',
+        'error',
+      );
     }
     return false;
   } catch (e) {

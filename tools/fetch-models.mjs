@@ -40,7 +40,12 @@ mkdirSync(modelsDir, { recursive: true });
 const FILES = [
   {
     name: 'scrfd_2.5g_bnkps.onnx',
-    url: 'https://github.com/cysin/scrfd_onnx/raw/refs/heads/main/scrfd_2.5g_bnkps.onnx',
+    // NOTE: use the direct media URL, not the github.com/.../raw/... page URL.
+    // The page URL answers with a 302 that carries no CORS headers, so
+    // browsers on GitHub Pages refuse to follow it ("Failed to fetch") and
+    // raw.githubusercontent/jsDelivr only serve the 132-byte Git-LFS pointer.
+    // This media URL serves the real 3.3 MB bytes with ACAO: * (verified).
+    url: 'https://media.githubusercontent.com/media/cysin/scrfd_onnx/refs/heads/main/scrfd_2.5g_bnkps.onnx',
     minBytes: 1_000_000,
     license: 'InsightFace model license (non-commercial research unless arranged)',
   },

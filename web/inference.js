@@ -230,7 +230,11 @@ export async function fetchModelFile(key, { label, minBytes }, { onProgress, onB
   const entry = manifest.files?.[key];
   if (!entry) fail('Model loading failed', `manifest.json has no '${key}' entry.`);
   const attempts = [{ url: `${state.config.modelBase}/${entry.path}`, cache: false, tag: 'local' }];
-  if (entry.remote) attempts.push({ url: entry.remote, cache: true, tag: 'remote' });
+  // `remote` (string) or `remotes` (array) — mirrors are tried in order.
+  // Keep the direct media/raw URLs here: page URLs that answer with a 302
+  // lacking CORS headers fail in browsers ("Failed to fetch").
+  const remotes = Array.isArray(entry.remotes) ? entry.remotes : entry.remote ? [entry.remote] : [];
+  for (const remote of remotes) attempts.push({ url: remote, cache: true, tag: 'remote' });
   const problems = [];
   for (const { url, cache, tag } of attempts) {
     try {
@@ -250,7 +254,9 @@ export async function fetchModelFile(key, { label, minBytes }, { onProgress, onB
   }
   fail(
     'Model loading failed',
-    `Could not fetch ${entry.path} (${problems.join(' / ')}). Install it per public/models/MODELS.md.`,
+    `Could not fetch ${entry.path} (${problems.join(' / ')}). ` +
+      `On a deployed site the remote mirror download failed (network, ad-blocker, or mirror CORS) — reload and check the DevTools console. ` +
+      `For local dev, install it per public/models/MODELS.md.`,
   );
 }
 
