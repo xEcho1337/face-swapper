@@ -45,9 +45,8 @@
           <div class="actions">
             <label class="btn" for="source-input">Upload a face</label>
             <input id="source-input" type="file" accept="image/jpeg,image/png,image/webp,image/*" class="visually-hidden" />
-            <button id="source-reset" class="btn" type="button">Use Charlie Kirk</button>
           </div>
-          <p class="dz-hint">Front-facing, one face, good light. Like everything else, it never leaves your device.</p>
+          <p class="source-hint">Front-facing, one face, good light.</p>
         </div>
       </div>
     </section>
@@ -61,6 +60,30 @@
         <label class="btn" for="file-input">Choose a file</label>
         <input id="file-input" type="file" accept="image/jpeg,image/png,image/webp,image/*" class="visually-hidden" />
         <p class="dz-hint">JPEG · PNG · WebP. EXIF orientation is respected. Very large images are capped at 4096px on the long side.</p>
+      </div>
+
+      <div id="upload-preview-wrap" class="upload-preview" hidden>
+        <canvas id="canvas-upload-preview" role="img" aria-label="Uploaded image preview"></canvas>
+        <p class="upload-preview-meta"><span id="upload-preview-name"></span> <span id="upload-preview-dims" class="dz-hint"></span></p>
+      </div>
+
+      <div class="controls-row">
+        <div class="controls">
+          <label for="swapper-model">Face swap model</label>
+          <select id="swapper-model">
+            <option value="reswapper">ReSwapper (default)</option>
+            <option value="inswapper">inswapper_128</option>
+          </select>
+        </div>
+
+        <div class="controls">
+          <label for="backend-pref">Backend (for performance testing)</label>
+          <select id="backend-pref">
+            <option value="auto">Auto (WebGPU, WASM fallback)</option>
+            <option value="webgpu">WebGPU only</option>
+            <option value="wasm">WASM only</option>
+          </select>
+        </div>
       </div>
 
       <div class="controls">

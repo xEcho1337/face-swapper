@@ -98,7 +98,7 @@
  * so `dist/` stays small and no import-map is needed inside workers.
  * Library code only — never user pixels.
  */
-const ORT_CDN_MODULE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.webgpu.bundle.min.mjs';
+const ORT_CDN_MODULE = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/ort.webgpu.bundle.min.mjs';
 let ort = null;
 
 async function ensureOrt(ortModuleUrl) {
@@ -136,15 +136,71 @@ export const CONTRACTS = {
   },
 };
 
+/**
+ * Selectable face-swap models. `fileKey` points at the manifest.json entry
+ * (local path + remote fallback, same mechanism for both). Both share the
+ * inswapper tensor contract — only weights, license and emap differ.
+ */
+export const SWAP_MODELS = {
+  reswapper: { fileKey: 'swapper', label: 'Face swap model (ReSwapper)' },
+  inswapper: { fileKey: 'swapper_inswapper', label: 'Face swap model (inswapper_128)' },
+};
+
 const state = {
   config: null,
   wasm: null, // Rust/WASM kernel module
-  backend: 'unknown', // 'webgpu' | 'wasm'
+  backend: 'unknown', // backend of the first successful session (legacy)
+  backendPreference: 'auto', // 'auto' | 'webgpu' | 'wasm' (perf testing)
+  swapperModel: 'reswapper', // key of SWAP_MODELS
   sessions: { detector: null, recognizer: null, swapper: null },
   manifest: null, // public/models/manifest.json (URL map: local path + remote fallback)
   emap: null, // Float32Array(512*512)
+  emapPath: null, // emap sidecar this `emap` was loaded from
   source: null, // { latent: Float32Array(512), width, height, preview: Uint8Array(RGBA 256) }
+  epLog: [], // per-EP failures for UI diagnostics (else console-only)
 };
+
+/**
+ * Switch the active swap model. Clears the swapper session, emap and prepared
+ * source identity (the latent depends on the model's emap) when it changes.
+ * Returns true when the model actually changed.
+ */
+export function setSwapperModel(name) {
+  if (!SWAP_MODELS[name]) fail('Invalid model', `Unknown swap model '${name}'.`);
+  if (state.swapperModel === name) return false;
+  state.swapperModel = name;
+  state.sessions.swapper = null;
+  state.sessions.swapperRoles = null;
+  state.emap = null;
+  state.emapPath = null;
+  state.source = null;
+  return true;
+}
+
+export function currentSwapperModel() {
+  return state.swapperModel;
+}
+
+/**
+ * Force the execution provider: 'auto' (webgpu, then wasm fallback),
+ * 'webgpu' or 'wasm'. Changing it drops live sessions (they are
+ * EP-specific); the prepared source identity is kept.
+ */
+export function setBackendPreference(name) {
+  const pref = name === 'webgpu' || name === 'wasm' ? name : 'auto';
+  if (state.backendPreference === pref) return false;
+  state.backendPreference = pref;
+  state.backend = 'unknown';
+  state.sessions.detector = null;
+  state.sessions.recognizer = null;
+  state.sessions.swapper = null;
+  state.sessions.swapperRoles = null;
+  return true;
+}
+
+export function currentBackendPreference() {
+  return state.backendPreference;
+}
 
 function fail(code, message, cause) {
   const err = new Error(message);
@@ -176,7 +232,8 @@ export function validateTensor(name, tensor, shapeSpec, dtype = 'float32') {
 
 async function createSessionWithFallback(modelUrl, { warmup, label }) {
   const failures = [];
-  for (const ep of ['webgpu', 'wasm']) {
+  const eps = state.backendPreference === 'auto' ? ['webgpu', 'wasm'] : [state.backendPreference];
+  for (const ep of eps) {
     try {
       const session = await ort.InferenceSession.create(modelUrl, {
         executionProviders: [ep],
@@ -187,12 +244,16 @@ async function createSessionWithFallback(modelUrl, { warmup, label }) {
     } catch (e) {
       // Full error -> DevTools console; one-line summary -> UI status list.
       console.error(`[faceswapper] ${label}: '${ep}' execution provider failed`, e);
-      failures.push(`${ep}: ${shortErr(e)}`);
+      const summary = `${ep}: ${shortErr(e)}`;
+      state.epLog.push({ label, ep, error: summary });
+      failures.push(summary);
     }
   }
   fail(
     'Inference failed',
-    `${label}: no execution provider worked. ` +
+    `${label}: no execution provider worked` +
+      (state.backendPreference === 'auto' ? '' : ` (backend forced to '${state.backendPreference}')`) +
+      `. ` +
       failures.map((f) => `[${f}]`).join(' ') +
       ` Open DevTools console for the full errors.`,
     new Error(failures.join(' | ')),
@@ -256,7 +317,9 @@ export async function fetchModelFile(key, { label, minBytes }, { onProgress, onB
     'Model loading failed',
     `Could not fetch ${entry.path} (${problems.join(' / ')}). ` +
       `On a deployed site the remote mirror download failed (network, ad-blocker, or mirror CORS) — reload and check the DevTools console. ` +
-      `For local dev, install it per public/models/MODELS.md.`,
+      (key === 'swapper_inswapper'
+        ? `inswapper_128 usually needs a local install (your licensed copy as public/models/inswapper_128.onnx plus its emap sidecar) because the GitHub release URL answers with a CORS-less redirect that browsers refuse. `
+        : `For local dev, install it per public/models/MODELS.md.`),
   );
 }
 
@@ -273,11 +336,13 @@ async function loadManifest() {
   return state.manifest;
 }
 
-export async function initInference({ wasmModule, modelBase, ortWasmBase, ortModuleUrl, numThreads } = {}) {
+export async function initInference({ wasmModule, modelBase, ortWasmBase, ortModuleUrl, numThreads, swapperModel, backendPreference } = {}) {
   state.wasm = wasmModule;
   await ensureOrt(ortModuleUrl);
+  if (swapperModel) setSwapperModel(swapperModel);
+  if (backendPreference) setBackendPreference(backendPreference);
   state.config = { modelBase: modelBase || './models', numThreads: numThreads || Math.min(4, (navigator.hardwareConcurrency || 4)) };
-  ort.env.wasm.wasmPaths = ortWasmBase || 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
+  ort.env.wasm.wasmPaths = ortWasmBase || 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.29.0/dist/';
   // WASM threads need SharedArrayBuffer, i.e. COOP/COEP headers
   // (crossOriginIsolated). Without them, force 1 thread instead of failing.
   const isolated = typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated === true;
@@ -301,6 +366,31 @@ export async function initInference({ wasmModule, modelBase, ortWasmBase, ortMod
 
 export function currentBackend() {
   return state.backend;
+}
+
+/** Backend per sessione: il detector può fallire su webgpu (es. AveragePool
+ *  con ceil_mode non supportato) mentre lo swapper no — riportare solo il
+ *  primo nasconde la verità. */
+export function sessionBackends() {
+  return {
+    detector: state.sessions.detector?.backend || null,
+    recognizer: state.sessions.recognizer?.backend || null,
+    swapper: state.sessions.swapper?.backend || null,
+  };
+}
+
+/** Per-EP failures seen so far (for UI diagnostics, not just the console). */
+export function epReport() {
+  return state.epLog.slice();
+}
+
+/** Whether WebGPU is even exposed in this scope (false = browser blocked it). */
+export function webgpuExposed() {
+  try {
+    return typeof navigator !== 'undefined' && !!navigator.gpu;
+  } catch {
+    return false;
+  }
 }
 
 async function ensureDetector(onProgress, onBytes) {
@@ -350,19 +440,23 @@ async function ensureRecognizer(onProgress, onBytes) {
 }
 
 async function ensureEmap() {
-  if (state.emap) return state.emap;
-  const url = `${state.config.modelBase}/reswapper.emap.json`;
+  const manifest = await loadManifest();
+  const fileKey = SWAP_MODELS[state.swapperModel].fileKey;
+  const emapName = manifest.files?.[fileKey]?.emap || 'reswapper.emap.json';
+  const modelName = manifest.files?.[fileKey]?.path || emapName.replace('.emap.json', '.onnx');
+  if (state.emap && state.emapPath === emapName) return state.emap;
+  const url = `${state.config.modelBase}/${emapName}`;
   let res;
   try {
     res = await fetch(url);
   } catch (e) {
-    fail('Model loading failed', 'Could not fetch the swapper emap matrix. Extract it once with tools/extract_emap.py (see MODELS.md).', e);
+    fail('Model loading failed', `Could not fetch the swapper emap matrix (${emapName}). Extract it once with tools/extract_emap.py (see MODELS.md).`, e);
   }
   if (!res.ok) {
     fail(
       'Model loading failed',
-      'reswapper.emap.json is missing. The emap matrix must be extracted once from YOUR copy of ' +
-        'reswapper-1019500.onnx: python3 tools/extract_emap.py public/models/reswapper-1019500.onnx public/models/reswapper.emap.json',
+      `${emapName} is missing. The emap matrix must be extracted once from YOUR copy of ` +
+        `${modelName}: python3 tools/extract_emap.py public/models/${modelName} public/models/${emapName}`,
     );
   }
   const contentType = res.headers.get('content-type') || '';
@@ -370,9 +464,9 @@ async function ensureEmap() {
   if (contentType.includes('text/html')) {
     fail(
       'Model loading failed',
-      'reswapper.emap.json is missing (the server returned an HTML page — SPA fallback for a missing file). ' +
-        'Extract it from YOUR copy of reswapper-1019500.onnx: ' +
-        'python3 tools/extract_emap.py public/models/reswapper-1019500.onnx public/models/reswapper.emap.json',
+      `${emapName} is missing (the server returned an HTML page — SPA fallback for a missing file). ` +
+        `Extract it from YOUR copy of ${modelName}: ` +
+        `python3 tools/extract_emap.py public/models/${modelName} public/models/${emapName}`,
     );
   }
   let j;
@@ -381,25 +475,27 @@ async function ensureEmap() {
   } catch {
     fail(
       'Invalid model',
-      'reswapper.emap.json is not valid JSON. Re-generate it with tools/extract_emap.py.',
+      `${emapName} is not valid JSON. Re-generate it with tools/extract_emap.py.`,
     );
   }
   if (!j || j.shape?.join(',') !== '512,512' || !Array.isArray(j.data) || j.data.length !== 512 * 512) {
-    fail('Invalid model', 'reswapper.emap.json must be {shape:[512,512], data:[262144 floats]}.');
+    fail('Invalid model', `${emapName} must be {shape:[512,512], data:[262144 floats]}.`);
   }
   state.emap = Float32Array.from(j.data);
+  state.emapPath = emapName;
   return state.emap;
 }
 
 async function ensureSwapper(onProgress, onBytes) {
-  if (state.sessions.swapper) return state.sessions.swapper;
+  if (state.sessions.swapper && state.sessions.swapper.model === state.swapperModel) return state.sessions.swapper;
+  const { fileKey, label } = SWAP_MODELS[state.swapperModel];
   const { buf } = await fetchModelFile(
-    'swapper',
-    { label: 'Face swap model', minBytes: 400_000_000 },
+    fileKey,
+    { label, minBytes: 400_000_000 },
     { onProgress, onBytes },
   );
   const { session, backend } = await createSessionWithFallback(buf, {
-    label: 'Face swap model',
+    label,
     warmup: async (s) => {
       if (s.inputNames.length !== 2) {
         fail('Invalid model', `Face swap model has ${s.inputNames.length} inputs, expected 2 (target image + source latent). Wrong model file?`);
@@ -437,7 +533,7 @@ async function ensureSwapper(onProgress, onBytes) {
       state.sessions.swapperRoles = { ...roles, output: onames[0] };
     },
   });
-  state.sessions.swapper = { session, backend };
+  state.sessions.swapper = { session, backend, model: state.swapperModel };
   return state.sessions.swapper;
 }
 

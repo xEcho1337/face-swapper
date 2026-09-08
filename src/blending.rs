@@ -36,8 +36,12 @@ pub fn gaussian_sigma_for_kernel(ksize: u32) -> f32 {
 
 /// 1D Gaussian kernel, odd `ksize`.
 fn gaussian_kernel_1d(ksize: u32) -> Vec<f32> {
+    gaussian_kernel_1d_sigma(ksize, gaussian_sigma_for_kernel(ksize))
+}
+
+/// 1D Gaussian kernel with explicit sigma, odd `ksize`.
+fn gaussian_kernel_1d_sigma(ksize: u32, sigma: f32) -> Vec<f32> {
     assert!(ksize % 2 == 1 && ksize >= 1);
-    let sigma = gaussian_sigma_for_kernel(ksize);
     let r = (ksize / 2) as i32;
     // OpenCV with sigma<=0 falls back to the formula above which is > 0 for
     // ksize >= 3; ksize==1 is identity.
@@ -62,11 +66,17 @@ fn gaussian_kernel_1d(ksize: u32) -> Vec<f32> {
 /// Separable Gaussian blur of a single-channel f32 mask, clamp-to-edge.
 /// `ksize` must be odd (mirrors `cv2.GaussianBlur(mask, (k,k), 0)`).
 pub fn gaussian_blur_f32(mask: &[f32], w: u32, h: u32, ksize: u32) -> Vec<f32> {
+    gaussian_blur_f32_sigma(mask, w, h, ksize, gaussian_sigma_for_kernel(ksize))
+}
+
+/// Same as [`gaussian_blur_f32`] with an explicit sigma (mirrors
+/// `cv2.GaussianBlur(mask, (k,k), sigma)`).
+pub fn gaussian_blur_f32_sigma(mask: &[f32], w: u32, h: u32, ksize: u32, sigma: f32) -> Vec<f32> {
     assert_eq!(mask.len(), (w * h) as usize);
     if ksize <= 1 {
         return mask.to_vec();
     }
-    let k = gaussian_kernel_1d(ksize);
+    let k = gaussian_kernel_1d_sigma(ksize, sigma);
     let r = (ksize / 2) as i32;
     let (w, h) = (w as i32, h as i32);
     let mut tmp = vec![0.0f32; (w * h) as usize];
@@ -246,6 +256,115 @@ pub fn build_crop_mask(white_bordered: &[f32], size: u32) -> Vec<f32> {
     let eroded = erode_square(white_bordered, size, size, erode_k, 1);
     let blurred = gaussian_blur_f32(&eroded, size, size, blur_k);
     blurred.iter().map(|v| (v / 255.0).clamp(0.0, 1.0)).collect()
+}
+
+/// Feathered elliptical paste-back mask in *crop* space, Deep-Live-Cam style.
+///
+/// A filled ellipse (semi-axes `0.44 * size`, matching DLC's
+/// `_create_elliptical_mask`) heavily blurred (`31x31`, sigma `12`) with
+/// values in [0,1]. Unlike the square [`build_crop_mask`], the corners are
+/// zero, so the swapped square's straight edges can never show as a visible
+/// box on the face — at the cost of covering slightly less forehead/chin,
+/// which the blur feather compensates.
+pub fn build_elliptical_mask(size: u32) -> Vec<f32> {
+    assert!(size > 0);
+    let s = size as usize;
+    let c = (size as f32 - 1.0) / 2.0;
+    let a = size as f32 * 0.44;
+    let mut mask = vec![0.0f32; s * s];
+    for y in 0..s {
+        for x in 0..s {
+            let dx = (x as f32 - c) / a;
+            let dy = (y as f32 - c) / a;
+            if dx * dx + dy * dy <= 1.0 {
+                mask[y * s + x] = 255.0;
+            }
+        }
+    }
+    let k = 31.min(size | 1); // odd, capped at the crop size
+    let k = if k % 2 == 1 { k } else { k - 1 }.max(1);
+    gaussian_blur_f32_sigma(&mask, size, size, k, 12.0)
+        .iter()
+        .map(|v| (v / 255.0).clamp(0.0, 1.0))
+        .collect()
+}
+
+/// Separable small-kernel blur of an interleaved RGB u8 buffer,
+/// clamp-to-edge. Internal helper for [`soften_rgb`]/[`sharpen_rgb`].
+fn blur_rgb(rgb: &[u8], w: usize, h: usize, kernel: &[f32]) -> Vec<f32> {
+    let r = kernel.len() / 2;
+    let mut tmp = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            for c in 0..3 {
+                let mut acc = 0.0f32;
+                for (i, kv) in kernel.iter().enumerate() {
+                    let xx = x.saturating_add(i).saturating_sub(r).min(w - 1);
+                    acc += rgb[(y * w + xx) * 3 + c] as f32 * kv;
+                }
+                tmp[(y * w + x) * 3 + c] = acc;
+            }
+        }
+    }
+    let mut out = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            for c in 0..3 {
+                let mut acc = 0.0f32;
+                for (i, kv) in kernel.iter().enumerate() {
+                    let yy = y.saturating_add(i).saturating_sub(r).min(h - 1);
+                    acc += tmp[(yy * w + x) * 3 + c] * kv;
+                }
+                out[(y * w + x) * 3 + c] = acc;
+            }
+        }
+    }
+    out
+}
+
+/// Light denoise for swap-model outputs: 3x3 Gaussian blended back with the
+/// original (`amount` in [0,1]). Kills single-pixel model grain before the
+/// illumination match (whose gain would otherwise amplify it) without
+/// flattening real edges — the follow-up unsharp pass restores crispness.
+pub fn soften_rgb(rgb: &[u8], w: u32, h: u32, amount: f32) -> Vec<u8> {
+    let (w, h) = (w as usize, h as usize);
+    assert_eq!(rgb.len(), w * h * 3);
+    let amount = amount.clamp(0.0, 1.0);
+    if amount <= 0.0 {
+        return rgb.to_vec();
+    }
+    let kernel = [0.25f32, 0.5, 0.25];
+    let blurred = blur_rgb(rgb, w, h, &kernel);
+    rgb.iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let m = v as f32 * (1.0 - amount) + blurred[i] * amount;
+            m.round().clamp(0.0, 255.0) as u8
+        })
+        .collect()
+}
+
+/// Unsharp mask (Deep-Live-Cam's post-swap `sharpen` step):
+/// `out = src * (1 + strength) - blur5(src) * strength`, per channel.
+/// Applied lightly on the 128px swapped crop it restores edge crispness lost
+/// to the model output + feathering; keep `strength` modest (0.3–0.5) or
+/// grain comes back.
+pub fn sharpen_rgb(rgb: &[u8], w: u32, h: u32, strength: f32) -> Vec<u8> {
+    let (w, h) = (w as usize, h as usize);
+    assert_eq!(rgb.len(), w * h * 3);
+    let strength = strength.clamp(0.0, 2.0);
+    if strength <= 0.0 {
+        return rgb.to_vec();
+    }
+    let kernel = gaussian_kernel_1d(5);
+    let blurred = blur_rgb(rgb, w, h, &kernel);
+    rgb.iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            let m = v as f32 * (1.0 + strength) - blurred[i] * strength;
+            m.round().clamp(0.0, 255.0) as u8
+        })
+        .collect()
 }
 
 /// `fake_diff` gate from `inswapper.py`, in crop space:
@@ -432,6 +551,64 @@ mod tests {
         let out = color_match_crop(&target, &swap, &mask, n);
         let mean: f32 = out.iter().map(|&v| v as f32).sum::<f32>() / (n * 3) as f32;
         assert!((mean - 200.0).abs() < 2.0, "mean={mean}");
+    }
+
+    #[test]
+    fn color_match_gain_is_clamped() {
+        // Target variance huge, swap variance tiny: raw gain would be ~60x.
+        let n = 64;
+        let mut target = vec![0u8; n * 3];
+        let mut swap = vec![0u8; n * 3];
+        for i in 0..n {
+            let t = if i % 2 == 0 { 0u8 } else { 255u8 };
+            let s = if i % 2 == 0 { 126u8 } else { 130u8 };
+            for c in 0..3 {
+                target[i * 3 + c] = t;
+                swap[i * 3 + c] = s;
+            }
+        }
+        let mask = vec![1.0f32; n];
+        let out = color_match_crop(&target, &swap, &mask, n);
+        // Mean still matches the target...
+        let mean: f32 = out.iter().map(|&v| v as f32).sum::<f32>() / (n * 3) as f32;
+        assert!((mean - 127.5).abs() < 2.0, "mean={mean}");
+        // ...but the range is bounded by the 2.0x clamp, not the ~60x raw gain.
+        let (lo, hi) = out.iter().fold((255u8, 0u8), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+        assert!((hi - lo) as f32 <= 4.0 * 2.0 + 2.0, "range={}..{}", lo, hi);
+    }
+
+    #[test]
+    fn elliptical_mask_covers_center_not_corners() {
+        let m = build_elliptical_mask(128);
+        assert_eq!(m.len(), 128 * 128);
+        assert!(m.iter().all(|&v| (0.0..=1.0).contains(&v)));
+        assert!(m[64 * 128 + 64] > 0.99, "center opaque");
+        assert!(m[0] < 0.01 && m[127] < 0.01, "corners transparent");
+        // Mostly face, not a full square: opaque area well below the square's.
+        let opaque = m.iter().filter(|&&v| v > 0.5).count() as f32 / m.len() as f32;
+        assert!(opaque > 0.3 && opaque < 0.75, "opaque fraction={opaque}");
+    }
+
+    #[test]
+    fn soften_uniform_is_identity_and_kills_impulse() {
+        let px = vec![100u8; 32 * 32 * 3];
+        assert_eq!(soften_rgb(&px, 32, 32, 0.5), px);
+        let mut noisy = px.clone();
+        noisy[(16 * 32 + 16) * 3] = 255;
+        let out = soften_rgb(&noisy, 32, 32, 0.5);
+        assert!(out[(16 * 32 + 16) * 3] < 255, "impulse reduced");
+        assert!(out[(16 * 32 + 16) * 3] > 100, "detail preserved");
+    }
+
+    #[test]
+    fn sharpen_uniform_is_identity_and_boosts_impulse() {
+        let px = vec![100u8; 32 * 32 * 3];
+        assert_eq!(sharpen_rgb(&px, 32, 32, 0.4), px);
+        let mut img = px.clone();
+        img[(16 * 32 + 16) * 3] = 200;
+        let out = sharpen_rgb(&img, 32, 32, 0.4);
+        assert!(out[(16 * 32 + 16) * 3] > 200, "peak enhanced");
+        assert!(out.iter().all(|&v| v <= 255));
     }
 
     #[test]

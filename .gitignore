@@ -8,9 +8,11 @@ public/models/*.zip
 public/models/*.json
 !public/models/manifest.json
 !public/models/MODELS.md
-# Exception: the emap sidecar is tiny (5.6 MB) and needed by static hosts.
-# It is AGPL-3.0 material extracted from ReSwapper weights — see EMAP-LICENSE.md.
+# Exception: the emap sidecars are tiny (5.6 MB each) and needed by static hosts.
+# They are derived from the swap weights — see EMAP-LICENSE.md (ReSwapper,
+# AGPL-3.0). The inswapper sidecar additionally needs InsightFace model rights.
 !public/models/reswapper.emap.json
+!public/models/inswapper_128.emap.json
 !public/models/EMAP-LICENSE.md
 # Source portrait: keep uncommitted by default (needs redistribution rights).
 # Commit yours explicitly with: git add -f public/source/example.jpg

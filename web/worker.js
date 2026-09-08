@@ -18,7 +18,7 @@
  *   { id, type: 'error', code, message }
  */
 
-import { initInference, currentBackend, detectFaces, prepareSourceIdentity, swapOneFace, getSource } from './inference.js';
+import { initInference, currentBackend, sessionBackends, epReport, webgpuExposed, detectFaces, prepareSourceIdentity, swapOneFace, getSource } from './inference.js';
 import initWasm, * as wasm from './pkg/faceswapper.js';
 
 let wasmReady = false;
@@ -53,13 +53,13 @@ onmessage = async (ev) => {
   try {
     if (type === 'init') {
       const wk = await ensureWasm();
-      await initInference({ wasmModule: wk, modelBase: msg.modelBase, ortWasmBase: msg.ortWasmBase, ortModuleUrl: msg.ortModuleUrl });
-      reply({ type: 'ready', backend: currentBackend() });
+      await initInference({ wasmModule: wk, modelBase: msg.modelBase, ortWasmBase: msg.ortWasmBase, ortModuleUrl: msg.ortModuleUrl, swapperModel: msg.swapperModel, backendPreference: msg.backendPreference });
+      reply({ type: 'ready', backend: currentBackend(), gpu: webgpuExposed(), epLog: epReport() });
       return;
     }
     if (type === 'prepare-source') {
       const wk = await ensureWasm();
-      await initInference({ wasmModule: wk, modelBase: msg.modelBase, ortWasmBase: msg.ortWasmBase, ortModuleUrl: msg.ortModuleUrl });
+      await initInference({ wasmModule: wk, modelBase: msg.modelBase, ortWasmBase: msg.ortWasmBase, ortModuleUrl: msg.ortModuleUrl, swapperModel: msg.swapperModel, backendPreference: msg.backendPreference });
       const rgba = new Uint8Array(msg.buf);
       const t0 = performance.now();
       await prepareSourceIdentity(rgba, msg.w, msg.h, {
@@ -74,6 +74,8 @@ onmessage = async (ev) => {
           type: 'source-ready',
           ms: Math.round(performance.now() - t0),
           backend: currentBackend(),
+          backends: sessionBackends(),
+          epLog: epReport(),
           previewBuf: preview.buffer,
           previewW: src.previewSize,
           previewH: src.previewSize,
@@ -84,7 +86,7 @@ onmessage = async (ev) => {
     }
     if (type === 'process') {
       const wk = await ensureWasm();
-      await initInference({ wasmModule: wk, modelBase: msg.modelBase, ortWasmBase: msg.ortWasmBase, ortModuleUrl: msg.ortModuleUrl });
+      await initInference({ wasmModule: wk, modelBase: msg.modelBase, ortWasmBase: msg.ortWasmBase, ortModuleUrl: msg.ortModuleUrl, swapperModel: msg.swapperModel, backendPreference: msg.backendPreference });
       const tAll = performance.now();
       const threshold = msg.threshold ?? 0.5;
       const maxFaces = msg.maxFaces ?? 50;
@@ -142,6 +144,8 @@ onmessage = async (ev) => {
           faces: faces.map((f) => ({ bbox: f.bbox, score: f.score })),
           timings,
           backend: currentBackend(),
+          backends: sessionBackends(),
+          epLog: epReport(),
         },
         [out.buffer],
       );

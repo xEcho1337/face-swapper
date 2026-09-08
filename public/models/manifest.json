@@ -30,6 +30,7 @@
       "path": "reswapper-1019500.onnx",
       "remote": "https://huggingface.co/somanchiu/reswapper/resolve/main/reswapper-1019500.onnx",
       "sha256": "744eaa30a6a3bdeb693c3c127b2c9ce6f2ea763f245b92ea71ea98b3a38b0fec",
+      "emap": "reswapper.emap.json",
       "role": "Identity-conditioned face swap, 128x128 (ReSwapper, inswapper-compatible contract).",
       "inputImage": { "dtype": "float32", "shape": [1, 3, 128, 128], "preprocessing": "128px norm_crop2, RGB, x/255" },
       "inputLatent": { "dtype": "float32", "shape": [1, 512], "derivation": "normalize(normed_embedding @ emap)" },
@@ -45,6 +46,27 @@
       "role": "Last-initializer projection (512x512 row-major) extracted once from YOUR reswapper copy.",
       "format": "{shape:[512,512], data:[262144 floats]}",
       "tool": "python3 tools/extract_emap.py public/models/reswapper-1019500.onnx public/models/reswapper.emap.json"
+    },
+    "swapper_inswapper": {
+      "path": "inswapper_128.onnx",
+      "remote": "https://github.com/deepinsight/insightface/releases/download/model-zoo/inswapper_128.onnx",
+      "sha256": "e4a3f08c753cb72d04e10aa0f7dbe3deebbf39567d4ead6dce08e98aa49e16af",
+      "emap": "inswapper_128.emap.json",
+      "role": "InsightFace inswapper_128 (license-gated, stronger identity transfer 0.84-0.96).",
+      "inputImage": { "dtype": "float32", "shape": [1, 3, 128, 128], "preprocessing": "128px norm_crop2, RGB, x/255" },
+      "inputLatent": { "dtype": "float32", "shape": [1, 512], "derivation": "normalize(normed_embedding @ emap)" },
+      "output": { "dtype": "float32", "shape": [1, 3, 128, 128], "range": "[0,1] RGB" },
+      "license": "InsightFace model license: non-commercial research unless arranged (contact@insightface.ai). Install YOUR licensed copy as public/models/inswapper_128.onnx, then extract the emap sidecar (same tool works).",
+      "provenance": "Official InsightFace release asset.",
+      "expectedSizeMB": "~554",
+      "backend": "WebGPU strongly recommended; WASM works but is slow",
+      "expectedMemoryMB": "~1200"
+    },
+    "emap_inswapper": {
+      "path": "inswapper_128.emap.json",
+      "role": "Last-initializer projection (512x512 row-major) extracted once from YOUR licensed inswapper_128 copy.",
+      "format": "{shape:[512,512], data:[262144 floats]}",
+      "tool": "python3 tools/extract_emap.py public/models/inswapper_128.onnx public/models/inswapper_128.emap.json"
     }
   }
 }

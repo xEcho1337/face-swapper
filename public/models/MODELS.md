@@ -98,6 +98,14 @@ To use it, point the `swapper.path`/`emap` entries at your files (same
 `extract_emap.py` works — it accepts any file whose last initializer is
 float32 `[512,512]`).
 
+In the app UI (card 2, “Face swap model”) you can switch between ReSwapper
+(default) and `inswapper_128` at runtime. The inswapper option is
+license-gated behind an acknowledgment checkbox and needs YOUR licensed copy
+as `public/models/inswapper_128.onnx` plus
+`public/models/inswapper_128.emap.json` (extract once with the same tool):
+its official GitHub release URL answers with a CORS-less redirect that
+browsers refuse, so the remote fallback alone is not reliable.
+
 ## License-compatibile alternatives
 
 If you cannot obtain inswapper rights, do **not** silently swap in an

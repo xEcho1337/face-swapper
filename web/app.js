@@ -44,7 +44,12 @@ const els = {
   sourceCanvas: $('canvas-source'),
   sourceName: $('source-name'),
   sourceInput: $('source-input'),
-  sourceReset: $('source-reset'),
+  swapperSelect: $('swapper-model'),
+  backendPref: $('backend-pref'),
+  uploadPreviewWrap: $('upload-preview-wrap'),
+  uploadPreviewCanvas: $('canvas-upload-preview'),
+  uploadPreviewName: $('upload-preview-name'),
+  uploadPreviewDims: $('upload-preview-dims'),
 };
 
 const worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' });
@@ -111,6 +116,52 @@ let result = null;   // { rgba: Uint8Array, w, h, faces, timings }
 let sourceReady = false;
 let sourceName = 'Charlie Kirk';
 let sourceBusy = false; // worker handles one prepare-source at a time
+let lastSource = null; // { blob, name } — resubmitted when the swap model changes
+
+// --- swap model selection --------------------------------------------------
+const SWAPPER_KEY = 'faceswapper-swapper-model';
+let swapperModel = 'reswapper';
+try {
+  const saved = localStorage.getItem(SWAPPER_KEY);
+  if (saved === 'reswapper' || saved === 'inswapper') swapperModel = saved;
+} catch { /* private mode */ }
+
+function syncSwapperUI() {
+  if (els.swapperSelect) els.swapperSelect.value = swapperModel;
+  if (els.backendPref) els.backendPref.value = backendPref;
+}
+
+// --- backend preference (performance testing) ------------------------------
+const BACKEND_KEY = 'faceswapper-backend';
+let backendPref = 'auto';
+try {
+  const saved = localStorage.getItem(BACKEND_KEY);
+  if (saved === 'webgpu' || saved === 'wasm' || saved === 'auto') backendPref = saved;
+} catch { /* private mode */ }
+
+function setBackendBadge(backend, detail) {
+  els.backend.textContent = backend === 'webgpu' ? 'WebGPU' : backend === 'wasm' ? 'WASM' : '…';
+  els.backend.title =
+    backend === 'webgpu'
+      ? 'ONNX Runtime Web · WebGPU execution provider'
+      : backend === 'wasm'
+        ? `ONNX Runtime Web · WASM fallback${detail ? ` (${detail})` : ''}`
+        : 'Backend not determined yet';
+}
+
+/** First webgpu failure summary from the worker, if any. */
+function firstEpFailure(epLog) {
+  const hit = (epLog || []).find((e) => e && e.ep === 'webgpu');
+  return hit ? hit.error : null;
+}
+
+/** Short per-session backend label, e.g. "det:wasm swap:webgpu". */
+function backendSummary(backends, fallback) {
+  const parts = [];
+  if (backends?.detector) parts.push(`det:${backends.detector}`);
+  if (backends?.swapper) parts.push(`swap:${backends.swapper}`);
+  return parts.length ? parts.join(' ') : (fallback || '?');
+}
 
 // --- worker init + fixed source identity ----------------------------------
 async function boot() {
@@ -133,13 +184,12 @@ async function boot() {
   } catch {
     /* private mode / unsupported — the app still works, cache just won't stick */
   }
-  const ready = await callWorker({ type: 'init', modelBase: MODEL_BASE });
+  const ready = await callWorker({ type: 'init', modelBase: MODEL_BASE, swapperModel, backendPreference: backendPref });
   if (ready.type === 'ready') {
-    els.backend.textContent = ready.backend === 'webgpu' ? 'WebGPU' : 'WASM';
-    els.backend.title =
-      ready.backend === 'webgpu'
-        ? 'ONNX Runtime Web · WebGPU execution provider'
-        : 'ONNX Runtime Web · WASM fallback (WebGPU unavailable)';
+    setBackendBadge(ready.backend);
+    if (ready.gpu === false) {
+      pushStage('WebGPU is not exposed by this browser (navigator.gpu is missing) — Brave Shields with strict fingerprinting protection can block it; try Shields down for this site, or Chrome. Full speed needs WebGPU; WASM still works.', 'error');
+    }
   } else {
     els.backend.textContent = 'unavailable';
     pushStage(`${ready.code || 'Error'}: ${ready.message || 'worker init failed'}`, 'error');
@@ -192,10 +242,12 @@ async function submitSourceBlob(blob, name) {
     const bmp = await decodeImageBitmap(blob);
     const { rgba, w, h } = bitmapToCappedRgba(bmp, 1024);
     bmp.close();
-    const r = await callWorker({ type: 'prepare-source', buf: rgba.buffer, w, h, modelBase: MODEL_BASE }, [rgba.buffer]);
+    const r = await callWorker({ type: 'prepare-source', buf: rgba.buffer, w, h, modelBase: MODEL_BASE, swapperModel, backendPreference: backendPref }, [rgba.buffer]);
     if (r.type === 'source-ready') {
       sourceReady = true;
       sourceName = name;
+      lastSource = { blob, name };
+      setBackendBadge(r.backends?.recognizer || r.backends?.detector || r.backend, firstEpFailure(r.epLog));
       els.source.textContent = `Source: ${name}`;
       els.source.title = `prepared in ${r.ms}ms via ${r.backend || '?'}`;
       els.sourceName.textContent = name;
@@ -264,6 +316,7 @@ async function handleFile(file) {
   result = null;
   els.resultPanel.hidden = true;
   if (!file || !file.type.startsWith('image/')) {
+    hideUploadPreview();
     pushStage('Unsupported image: please choose a JPEG, PNG or WebP file.', 'error');
     return;
   }
@@ -271,6 +324,7 @@ async function handleFile(file) {
   try {
     bmp = await decodeImageBitmap(file);
   } catch (e) {
+    hideUploadPreview();
     pushStage(`Unsupported image: this file could not be decoded (${e.message || e}).`, 'error');
     return;
   }
@@ -278,6 +332,7 @@ async function handleFile(file) {
     const { rgba, w, h } = bitmapToCappedRgba(bmp, MAX_LONG_SIDE);
     original = { rgba, w, h, name: file.name.replace(/\.[^.]+$/, '') || 'image' };
     drawPreview();
+    drawUploadPreview();
     els.processBtn.disabled = false;
     els.resetBtn.disabled = false;
     pushStage(`Loaded ${w}×${h} — press “Detect & Swap”.`);
@@ -300,7 +355,6 @@ els.sourceInput.addEventListener('change', (e) => {
   handleSourceFile(e.target.files[0]);
   e.target.value = ''; // allow re-picking the same file
 });
-els.sourceReset.addEventListener('click', () => loadBundledSource());
 for (const evt of ['dragenter', 'dragover']) {
   els.dropzone.addEventListener(evt, (e) => { e.preventDefault(); els.dropzone.classList.add('over'); });
 }
@@ -318,6 +372,37 @@ els.threshold.addEventListener('input', () => {
   els.thresholdVal.textContent = Number(els.threshold.value).toFixed(2);
 });
 
+// --- backend preference ----------------------------------------------------
+els.backendPref?.addEventListener('change', () => {
+  const next = els.backendPref.value === 'webgpu' || els.backendPref.value === 'wasm' ? els.backendPref.value : 'auto';
+  if (next === backendPref) return;
+  backendPref = next;
+  try { localStorage.setItem(BACKEND_KEY, backendPref); } catch { /* ignore */ }
+  // Sessions are EP-specific: the worker drops them on the next call.
+  // Timings in the result line stay comparable per backend.
+  pushStage(`Backend set to “${backendPref}” — next run uses it.`);
+});
+
+// --- swap model selection --------------------------------------------------
+els.swapperSelect?.addEventListener('change', async () => {
+  const next = els.swapperSelect.value === 'inswapper' ? 'inswapper' : 'reswapper';
+  if (next === swapperModel) return;
+  swapperModel = next;
+  try { localStorage.setItem(SWAPPER_KEY, swapperModel); } catch { /* ignore */ }
+  syncSwapperUI();
+  // The source latent is model-specific (emap differs): the worker drops it
+  // on switch, so the current source must be prepared again.
+  sourceReady = false;
+  result = null;
+  els.resultPanel.hidden = true;
+  pushStage(`Swap model set to “${swapperModel}” — re-preparing source identity…`);
+  if (lastSource) {
+    await submitSourceBlob(lastSource.blob, lastSource.name);
+  } else {
+    await loadBundledSource();
+  }
+});
+
 // --- processing --------------------------------------------------------------
 els.processBtn.addEventListener('click', async () => {
   if (!original) return;
@@ -333,7 +418,7 @@ els.processBtn.addEventListener('click', async () => {
   // intact for the before/after view. Transfer the copy.
   const buf = original.rgba.slice().buffer;
   const r = await callWorker(
-    { type: 'process', buf, w: original.w, h: original.h, threshold: Number(els.threshold.value), maxFaces: 50, modelBase: MODEL_BASE },
+    { type: 'process', buf, w: original.w, h: original.h, threshold: Number(els.threshold.value), maxFaces: 50, modelBase: MODEL_BASE, swapperModel, backendPreference: backendPref },
     [buf],
   );
   els.processBtn.disabled = false;
@@ -344,13 +429,16 @@ els.processBtn.addEventListener('click', async () => {
   }
   hideDownload();
   result = { rgba: new Uint8Array(r.buf), w: r.w, h: r.h, faces: r.faces, timings: r.timings };
+  setBackendBadge(r.backends?.swapper || r.backend, firstEpFailure(r.epLog));
   drawPreview();
   if (els.debugBoxes.checked) drawDebugBoxes();
   els.resultPanel.hidden = false;
   const t = r.timings || {};
+  const perFace = t.swapMsPerFace || [];
+  const swapStr = perFace.length === 1 ? `${perFace[0]}ms` : perFace.length > 1 ? `[${perFace.join(', ')}]ms` : '?';
   els.resultMeta.textContent =
     `${r.faces.length} face${r.faces.length === 1 ? '' : 's'} swapped · ` +
-    `detect ${t.detectMs ?? '?'}ms · swap [${(t.swapMsPerFace || []).join(', ')}]ms · total ${t.totalMs ?? '?'}ms · backend ${r.backend} · source: ${sourceName}`;
+    `detect ${t.detectMs ?? '?'}ms · swap ${swapStr} · total ${t.totalMs ?? '?'}ms · backend ${backendSummary(r.backends, r.backend)} · model ${swapperModel} · source: ${sourceName}`;
   els.resultPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
 
@@ -361,6 +449,7 @@ els.resetBtn.addEventListener('click', () => {
   els.processBtn.disabled = true;
   els.resetBtn.disabled = true;
   els.resultPanel.hidden = true;
+  hideUploadPreview();
   clearStages();
   hideDownload();
 });
@@ -369,6 +458,19 @@ els.resetBtn.addEventListener('click', () => {
 function fitCanvas(canvas, w, h) {
   canvas.width = w;
   canvas.height = h;
+}
+
+function drawUploadPreview() {
+  if (!original) return;
+  fitCanvas(els.uploadPreviewCanvas, original.w, original.h);
+  els.uploadPreviewCanvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(original.rgba), original.w, original.h), 0, 0);
+  els.uploadPreviewName.textContent = original.name || 'image';
+  els.uploadPreviewDims.textContent = `· ${original.w}×${original.h}`;
+  els.uploadPreviewWrap.hidden = false;
+}
+
+function hideUploadPreview() {
+  els.uploadPreviewWrap.hidden = true;
 }
 
 function drawPreview() {
@@ -547,4 +649,5 @@ export function embedPngText(pngBuffer) {
 els.dlPng.addEventListener('click', () => exportCanvas('image/png'));
 els.dlJpg.addEventListener('click', () => exportCanvas('image/jpeg', 0.92));
 
+syncSwapperUI();
 boot();

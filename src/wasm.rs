@@ -68,6 +68,34 @@ pub fn resize_rgba_js(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32) -> Result<
     Ok(image::resize_rgba_bilinear(src, sw, sh, dw, dh))
 }
 
+/// Bicubic `warpAffine`-equivalent on RGBA bytes (replicate border).
+/// For the paste-back magnification of the 128px swap output; masks stay
+/// on the bilinear warp.
+#[wasm_bindgen(js_name = warpRgbaBicubic)]
+pub fn warp_rgba_bicubic_js(
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    m: &[f32],
+    dw: u32,
+    dh: u32,
+) -> Result<Vec<u8>, JsValue> {
+    if m.len() != 6 {
+        return Err(JsValue::from_str("warpRgbaBicubic: need 6 floats"));
+    }
+    if src.len() != (sw * sh * 4) as usize {
+        return Err(JsValue::from_str("warpRgbaBicubic: src length mismatch"));
+    }
+    Ok(image::warp_affine_rgba_bicubic(
+        src,
+        sw,
+        sh,
+        &[m[0], m[1], m[2], m[3], m[4], m[5]],
+        dw,
+        dh,
+    ))
+}
+
 /// Letterbox geometry: returns `[new_w, new_h, det_scale]`.
 #[wasm_bindgen(js_name = letterboxGeometry)]
 pub fn letterbox_geometry_js(src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<f32> {
@@ -100,6 +128,34 @@ pub fn color_match_crop_js(
         return Err(JsValue::from_str("colorMatchCrop: length mismatch"));
     }
     Ok(blending::color_match_crop(target_rgb, swap_rgb, mask, n))
+}
+
+/// Feathered elliptical paste-back mask (Deep-Live-Cam style), `size*size`
+/// weights in [0,1]. Replaces the square `buildCropMask` for the swap path.
+#[wasm_bindgen(js_name = buildEllipticalMask)]
+pub fn build_elliptical_mask_js(size: u32) -> Result<Vec<f32>, JsValue> {
+    if size == 0 {
+        return Err(JsValue::from_str("buildEllipticalMask: bad size"));
+    }
+    Ok(blending::build_elliptical_mask(size))
+}
+
+/// Light denoise of an `npix*3` RGB buffer (`amount` 0..1).
+#[wasm_bindgen(js_name = softenRgb)]
+pub fn soften_rgb_js(rgb: &[u8], w: u32, h: u32, amount: f32) -> Result<Vec<u8>, JsValue> {
+    if rgb.len() != (w * h * 3) as usize {
+        return Err(JsValue::from_str("softenRgb: length mismatch"));
+    }
+    Ok(blending::soften_rgb(rgb, w, h, amount))
+}
+
+/// Unsharp mask of an `npix*3` RGB buffer (`strength` 0..2).
+#[wasm_bindgen(js_name = sharpenRgb)]
+pub fn sharpen_rgb_js(rgb: &[u8], w: u32, h: u32, strength: f32) -> Result<Vec<u8>, JsValue> {
+    if rgb.len() != (w * h * 3) as usize {
+        return Err(JsValue::from_str("sharpenRgb: length mismatch"));
+    }
+    Ok(blending::sharpen_rgb(rgb, w, h, strength))
 }
 
 /// Full-resolution feathered composite. `target` RGBA, `swap` RGB,

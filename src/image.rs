@@ -78,6 +78,85 @@ pub fn warp_affine_rgba(
     out
 }
 
+/// Catmull-Rom cubic kernel (a = -0.5).
+fn cubic_kernel(x: f32) -> f32 {
+    let ax = x.abs();
+    if ax <= 1.0 {
+        1.5 * ax * ax * ax - 2.5 * ax * ax + 1.0
+    } else if ax < 2.0 {
+        -0.5 * ax * ax * ax + 2.5 * ax * ax - 4.0 * ax + 2.0
+    } else {
+        0.0
+    }
+}
+
+/// Bicubic sample of an RGBA8 image with clamp-to-edge (replicate) border.
+/// Clamping (rather than the zero border of [`warp_affine_rgba`]) mirrors
+/// what Deep-Live-Cam does for its paste-back warp
+/// (`cv2.warpAffine(..., borderMode=cv2.BORDER_REPLICATE)`): magnifying the
+/// 128px swap output with a zero border would darken the feathered rim,
+/// while replicate keeps edge pixels stable under the mask.
+fn sample_bicubic_replicate(src: &[u8], w: u32, h: u32, x: f32, y: f32) -> [f32; 4] {
+    let (w, h) = (w as i32, h as i32);
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let mut out = [0.0f32; 4];
+    for dy in -1..=2 {
+        let py = (y0 + dy).clamp(0, h - 1);
+        let ky = cubic_kernel(y - (y0 + dy) as f32);
+        if ky == 0.0 {
+            continue;
+        }
+        for dx in -1..=2 {
+            let px = (x0 + dx).clamp(0, w - 1);
+            let kx = cubic_kernel(x - (x0 + dx) as f32);
+            let weight = kx * ky;
+            if weight == 0.0 {
+                continue;
+            }
+            let o = ((py as u32 * w as u32 + px as u32) * 4) as usize;
+            for c in 0..4 {
+                out[c] += src[o + c] as f32 * weight;
+            }
+        }
+    }
+    out
+}
+
+/// Warp like [`warp_affine_rgba`] (same matrix convention: `m` is inverted
+/// internally) but with bicubic sampling and replicate borders. Intended for
+/// the paste-back of the 128px swap output to full resolution, where
+/// bilinear magnification looks blocky. Masks must keep going through the
+/// bilinear warp (weights must never overshoot [0,1]).
+pub fn warp_affine_rgba_bicubic(
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    m: &crate::geometry::Affine2x3,
+    dw: u32,
+    dh: u32,
+) -> Vec<u8> {
+    assert_eq!(src.len(), (sw * sh * 4) as usize);
+    let inv = crate::geometry::invert_affine(m);
+    let mut out = vec![0u8; (dw * dh * 4) as usize];
+    let inv = match inv {
+        Some(v) => v,
+        None => return out,
+    };
+    for y in 0..dh {
+        for x in 0..dw {
+            let sx = inv[0] * x as f32 + inv[1] * y as f32 + inv[2];
+            let sy = inv[3] * x as f32 + inv[4] * y as f32 + inv[5];
+            let s = sample_bicubic_replicate(src, sw, sh, sx, sy);
+            let o = ((y * dw + x) * 4) as usize;
+            for c in 0..4 {
+                out[o + c] = s[c].round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    out
+}
+
 /// Bilinear resize of an RGBA8 image (clamp-to-edge borders, like canvas
 /// `drawImage` for interior/edge pixels — unlike `warp_affine_rgba`, which
 /// uses zero borders to match `cv2.warpAffine(borderValue=0)`).
@@ -288,6 +367,47 @@ mod tests {
     fn warp_singular_matrix_yields_black() {
         let src = vec![255u8; 4 * 4 * 4];
         let out = warp_affine_rgba(&src, 4, 4, &[1.0, 2.0, 3.0, 2.0, 4.0, 5.0], 4, 4);
+        assert!(out.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn warp_bicubic_identity_near_roundtrip() {
+        let w = 8;
+        let h = 6;
+        let mut src = vec![0u8; (w * h * 4) as usize];
+        for i in 0..(w * h) as usize {
+            src[i * 4] = (i * 3 % 256) as u8;
+            src[i * 4 + 1] = (i * 5 % 256) as u8;
+            src[i * 4 + 2] = (i * 7 % 256) as u8;
+            src[i * 4 + 3] = 255;
+        }
+        let ident = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        let out = warp_affine_rgba_bicubic(&src, w, h, &ident, w, h);
+        // Bicubic interpolates exactly at integer coords (up to fp error).
+        for (a, b) in out.iter().zip(src.iter()) {
+            assert!((*a as i16 - *b as i16).abs() <= 1, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn warp_bicubic_constant_stays_constant() {
+        let src = vec![77u8, 88, 99, 255].repeat(16 * 16);
+        // Translate by half a pixel: replicate border keeps it constant.
+        let m = [1.0, 0.0, 0.5, 0.0, 1.0, 0.5];
+        let out = warp_affine_rgba_bicubic(&src, 16, 16, &m, 32, 32);
+        // All RGB channels constant; alpha constant too.
+        for i in 0..(32 * 32) as usize {
+            assert_eq!(out[i * 4], 77);
+            assert_eq!(out[i * 4 + 1], 88);
+            assert_eq!(out[i * 4 + 2], 99);
+            assert_eq!(out[i * 4 + 3], 255);
+        }
+    }
+
+    #[test]
+    fn warp_bicubic_singular_matrix_yields_black() {
+        let src = vec![255u8; 4 * 4 * 4];
+        let out = warp_affine_rgba_bicubic(&src, 4, 4, &[1.0, 2.0, 3.0, 2.0, 4.0, 5.0], 4, 4);
         assert!(out.iter().all(|&v| v == 0));
     }
 

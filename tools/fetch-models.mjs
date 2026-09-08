@@ -10,6 +10,8 @@
  * separate license (contact@insightface.ai). Pass an explicit
  * `--with-inswapper <url>` only if YOU hold the rights — the script prints
  * the licensing reminder and requires `--i-hold-inswapper-rights`.
+ * (Official release asset:
+ * `https://github.com/deepinsight/insightface/releases/download/model-zoo/inswapper_128.onnx`.)
  *
  * After fetching the swapper, extract its emap sidecar:
  *   python3 tools/extract_emap.py public/models/reswapper-1019500.onnx public/models/reswapper.emap.json
