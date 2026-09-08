@@ -23,7 +23,13 @@
  */
 export const MODEL_CACHE_NAME = 'faceswapper-models-v1';
 
-const cacheKey = (key) => `model:${key}`;
+// Cache Storage only accepts http(s) request URLs — the previous
+// `model:${key}` custom-scheme key threw TypeError on match/put (swallowed
+// by try/catch), so nothing was ever read or written and every visit
+// re-downloaded ~730 MB. Use a synthetic https URL namespaced by file.
+function cacheRequest(key) {
+  return new Request(`https://faceswapper.local/__faceswapper_models/v1/${encodeURIComponent(key)}`);
+}
 
 function cacheSupported() {
   try {
@@ -49,16 +55,16 @@ export async function cachedFetch(url, { key = null, expectedBytes = 0, sha256 =
   if (key && cacheSupported()) {
     try {
       const cache = await caches.open(MODEL_CACHE_NAME);
-      const hit = await cache.match(cacheKey(key));
+      const hit = await cache.match(cacheRequest(key));
       if (hit) {
         const buf = await hit.arrayBuffer();
         const sizeOk = buf.byteLength >= expectedBytes;
         const hashOk = !sha256 || (await sha256Hex(buf)) === sha256;
         if (sizeOk && hashOk) return { buf, source: 'cache' };
-        await cache.delete(cacheKey(key)); // stale/corrupt entry: refetch below
+        await cache.delete(cacheRequest(key)); // stale/corrupt entry: refetch below
       }
-    } catch {
-      /* Cache API broken/unavailable (e.g. private mode) — use network */
+    } catch (e) {
+      console.warn('[faceswapper] model cache read failed — using network', e);
     }
   }
 
@@ -115,11 +121,11 @@ export async function cachedFetch(url, { key = null, expectedBytes = 0, sha256 =
     try {
       const cache = await caches.open(MODEL_CACHE_NAME);
       await cache.put(
-        cacheKey(key),
+        cacheRequest(key),
         new Response(buf.slice(0), { headers: { 'content-type': 'application/octet-stream' } }),
       );
-    } catch {
-      /* quota/private mode — run uncached */
+    } catch (e) {
+      console.warn('[faceswapper] model cache write failed — running uncached', e);
     }
   }
   return { buf, source: 'network' };
