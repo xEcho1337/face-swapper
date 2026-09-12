@@ -125,7 +125,7 @@ onmessage = async (ev) => {
       for (let i = 0; i < faces.length; i++) {
         progress(`Swapping ${i + 1} / ${faces.length} faces...`);
         const tF = performance.now();
-        const { backRgb3, backMask } = await swapOneFace(working, w, h, faces[i], source.latent, { onBytes: forwardBytes });
+        const { backRgb3, backMask } = await swapOneFace(working, w, h, faces[i], source.latent, { colorMatch: msg.colorMatch ?? false, onBytes: forwardBytes });
         progress('Blending result...');
         working = wk.blendFullres(working, backRgb3, backMask, w, h);
         perFaceMs.push(Math.round(performance.now() - tF));

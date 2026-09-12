@@ -13,6 +13,7 @@ public/models/*.json
 # AGPL-3.0). The inswapper sidecar additionally needs InsightFace model rights.
 !public/models/reswapper.emap.json
 !public/models/inswapper_128.emap.json
+!public/models/reswapper_256.emap.json
 !public/models/EMAP-LICENSE.md
 # Source portrait: keep uncommitted by default (needs redistribution rights).
 # Commit yours explicitly with: git add -f public/source/example.jpg

@@ -26,6 +26,7 @@ const els = {
   threshold: $('threshold'),
   thresholdVal: $('threshold-val'),
   debugBoxes: $('debug-boxes'),
+  colorMatch: $('color-match'),
   processBtn: $('process-btn'),
   resetBtn: $('reset-btn'),
   resultPanel: $('result-panel'),
@@ -120,10 +121,11 @@ let lastSource = null; // { blob, name } — resubmitted when the swap model cha
 
 // --- swap model selection --------------------------------------------------
 const SWAPPER_KEY = 'faceswapper-swapper-model';
+const SWAPPER_MODELS = ['reswapper', 'reswapper256', 'inswapper'];
 let swapperModel = 'reswapper';
 try {
   const saved = localStorage.getItem(SWAPPER_KEY);
-  if (saved === 'reswapper' || saved === 'inswapper') swapperModel = saved;
+  if (SWAPPER_MODELS.includes(saved)) swapperModel = saved;
 } catch { /* private mode */ }
 
 function syncSwapperUI() {
@@ -385,7 +387,7 @@ els.backendPref?.addEventListener('change', () => {
 
 // --- swap model selection --------------------------------------------------
 els.swapperSelect?.addEventListener('change', async () => {
-  const next = els.swapperSelect.value === 'inswapper' ? 'inswapper' : 'reswapper';
+  const next = SWAPPER_MODELS.includes(els.swapperSelect.value) ? els.swapperSelect.value : 'reswapper';
   if (next === swapperModel) return;
   swapperModel = next;
   try { localStorage.setItem(SWAPPER_KEY, swapperModel); } catch { /* ignore */ }
@@ -418,7 +420,7 @@ els.processBtn.addEventListener('click', async () => {
   // intact for the before/after view. Transfer the copy.
   const buf = original.rgba.slice().buffer;
   const r = await callWorker(
-    { type: 'process', buf, w: original.w, h: original.h, threshold: Number(els.threshold.value), maxFaces: 50, modelBase: MODEL_BASE, swapperModel, backendPreference: backendPref },
+    { type: 'process', buf, w: original.w, h: original.h, threshold: Number(els.threshold.value), maxFaces: 50, modelBase: MODEL_BASE, swapperModel, backendPreference: backendPref, colorMatch: els.colorMatch?.checked ?? false },
     [buf],
   );
   els.processBtn.disabled = false;

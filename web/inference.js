@@ -142,8 +142,9 @@ export const CONTRACTS = {
  * inswapper tensor contract — only weights, license and emap differ.
  */
 export const SWAP_MODELS = {
-  reswapper: { fileKey: 'swapper', label: 'Face swap model (ReSwapper)' },
-  inswapper: { fileKey: 'swapper_inswapper', label: 'Face swap model (inswapper_128)' },
+  reswapper: { fileKey: 'swapper', label: 'Face swap model (ReSwapper)', size: 128 },
+  reswapper256: { fileKey: 'swapper_reswapper256', label: 'Face swap model (ReSwapper 256)', size: 256 },
+  inswapper: { fileKey: 'swapper_inswapper', label: 'Face swap model (inswapper_128)', size: 128 },
 };
 
 const state = {
@@ -488,7 +489,7 @@ async function ensureEmap() {
 
 async function ensureSwapper(onProgress, onBytes) {
   if (state.sessions.swapper && state.sessions.swapper.model === state.swapperModel) return state.sessions.swapper;
-  const { fileKey, label } = SWAP_MODELS[state.swapperModel];
+  const { fileKey, label, size: S } = SWAP_MODELS[state.swapperModel];
   const { buf } = await fetchModelFile(
     fileKey,
     { label, minBytes: 400_000_000 },
@@ -504,7 +505,7 @@ async function ensureSwapper(onProgress, onBytes) {
       // which assignment the graph accepts (ORT validates shapes).
       // NOTE: both probe errors are reported — an earlier version only
       // surfaced the second probe's error, masking the real failure.
-      const img = new ort.Tensor('float32', new Float32Array(1 * 3 * 128 * 128), [1, 3, 128, 128]);
+      const img = new ort.Tensor('float32', new Float32Array(1 * 3 * S * S), [1, 3, S, S]);
       const lat = new ort.Tensor('float32', new Float32Array(1 * 512), [1, 512]);
       const [n0, n1] = s.inputNames;
       let out = null;
@@ -529,7 +530,7 @@ async function ensureSwapper(onProgress, onBytes) {
       }
       const onames = Object.keys(out);
       if (onames.length !== 1) fail('Invalid model', `Face swap model returned ${onames.length} outputs, expected 1.`);
-      validateTensor(onames[0], out[onames[0]], [1, 3, 128, 128]);
+      validateTensor(onames[0], out[onames[0]], [1, 3, S, S]);
       state.sessions.swapperRoles = { ...roles, output: onames[0] };
     },
   });
@@ -819,10 +820,10 @@ function area(b) {
 // Swap + paste-back for ONE target face
 // ---------------------------------------------------------------------------
 
-export async function swapOneFace(targetRgba, tw, th, face, sourceLatent, { colorMatch = true, onBytes = null } = {}) {
+export async function swapOneFace(targetRgba, tw, th, face, sourceLatent, { colorMatch = false, onBytes = null } = {}) {
   const sw = await ensureSwapper(undefined, onBytes);
-  const S = 128;
-  // 1. align target face (norm_crop2 @128)
+  const S = SWAP_MODELS[state.swapperModel]?.size || 128;
+  // 1. align target face (norm_crop2 @SxS)
   const { crop: aimg, M } = alignCrop(targetRgba, tw, th, face.landmarks, S);
   // 2. swap inference: blob = RGB/255
   const chw = rgbaToNchw(aimg, S, S, 0.0, 255.0);
@@ -862,9 +863,12 @@ export async function swapOneFace(targetRgba, tw, th, face, sourceLatent, { colo
     }
   }
   const maskCrop = state.wasm.buildCropMask(white, S);
-  // 5. illumination adaptation (masked moment match in crop space)
+  // 5. plain paste-back (Deep-Live-Cam parity): the raw swap output is
+  // warped back untouched — no pre-blur, no sharpen. Optional masked
+  // illumination match only when the caller asks for it.
   const matched = colorMatch ? state.wasm.colorMatchCrop(aimgRgb, fakeRgb, maskCrop, S * S) : fakeRgb;
-  // 6. warp swapped face + mask back with IM
+  // 6. warp swapped face + mask back with IM: bilinear + replicate border
+  // for pixels (DLC), bilinear + zero border for the mask weights.
   const IM = state.wasm.invertAffine(Float32Array.from(M));
   const matchedRgba = new Uint8Array(S * S * 4);
   for (let i = 0; i < S * S; i++) {
@@ -873,7 +877,9 @@ export async function swapOneFace(targetRgba, tw, th, face, sourceLatent, { colo
     matchedRgba[i * 4 + 2] = matched[i * 3 + 2];
     matchedRgba[i * 4 + 3] = 255;
   }
-  const backRgb = state.wasm.warpRgba(matchedRgba, S, S, IM, tw, th);
+  const backRgb = state.wasm.warpRgbaReplicate
+    ? state.wasm.warpRgbaReplicate(matchedRgba, S, S, IM, tw, th)
+    : state.wasm.warpRgba(matchedRgba, S, S, IM, tw, th);
   // Warp mask as RGBA (pack weight into all channels, bilinear = smooth).
   const maskRgba = new Uint8Array(S * S * 4);
   for (let i = 0; i < S * S; i++) {

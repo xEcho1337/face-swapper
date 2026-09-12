@@ -13,6 +13,69 @@
 //!   `SCRFD.detect` in `detection/scrfd/tools/scrfd.py`).
 //! - Tensor layout for ONNX Runtime Web is NCHW float32.
 
+/// Bilinear sample of an RGBA8 image with clamp-to-edge (replicate) border.
+fn sample_bilinear_replicate(src: &[u8], w: u32, h: u32, x: f32, y: f32) -> [f32; 4] {
+    let w = w as i32;
+    let h = h as i32;
+    let x0 = x.floor() as i32;
+    let y0 = y.floor() as i32;
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let mut out = [0.0f32; 4];
+    for dy in 0..2 {
+        for dx in 0..2 {
+            let px = (x0 + dx).clamp(0, w - 1);
+            let py = (y0 + dy).clamp(0, h - 1);
+            let wx = if dx == 0 { 1.0 - fx } else { fx };
+            let wy = if dy == 0 { 1.0 - fy } else { fy };
+            let weight = wx * wy;
+            if weight == 0.0 {
+                continue;
+            }
+            let o = ((py as u32 * w as u32 + px as u32) * 4) as usize;
+            for c in 0..4 {
+                out[c] += src[o + c] as f32 * weight;
+            }
+        }
+    }
+    out
+}
+
+/// Warp like [`warp_affine_rgba`] (same matrix convention) but with bilinear
+/// sampling and replicate borders — the combination Deep-Live-Cam uses for
+/// its paste-back (`cv2.warpAffine(..., INTER_LINEAR, BORDER_REPLICATE)`).
+/// Replicate (instead of zero) keeps the feathered rim from darkening when
+/// the 128/256px swap output is magnified to full resolution. Masks keep
+/// using the zero-border warp.
+pub fn warp_affine_rgba_replicate(
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    m: &crate::geometry::Affine2x3,
+    dw: u32,
+    dh: u32,
+) -> Vec<u8> {
+    assert_eq!(src.len(), (sw * sh * 4) as usize);
+    let inv = crate::geometry::invert_affine(m);
+    let mut out = vec![0u8; (dw * dh * 4) as usize];
+    let inv = match inv {
+        Some(v) => v,
+        None => return out,
+    };
+    for y in 0..dh {
+        for x in 0..dw {
+            let sx = inv[0] * x as f32 + inv[1] * y as f32 + inv[2];
+            let sy = inv[3] * x as f32 + inv[4] * y as f32 + inv[5];
+            let s = sample_bilinear_replicate(src, sw, sh, sx, sy);
+            let o = ((y * dw + x) * 4) as usize;
+            for c in 0..4 {
+                out[o + c] = s[c].round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    out
+}
+
 /// Bilinear sample of an RGBA8 image with zero border. Returns [r,g,b,a].
 fn sample_bilinear(src: &[u8], w: u32, h: u32, x: f32, y: f32) -> [f32; 4] {
     let w = w as i32;
@@ -368,6 +431,38 @@ mod tests {
         let src = vec![255u8; 4 * 4 * 4];
         let out = warp_affine_rgba(&src, 4, 4, &[1.0, 2.0, 3.0, 2.0, 4.0, 5.0], 4, 4);
         assert!(out.iter().all(|&v| v == 0));
+    }
+
+    #[test]
+    fn warp_replicate_identity_roundtrips() {
+        let w = 8;
+        let h = 6;
+        let mut src = vec![0u8; (w * h * 4) as usize];
+        for i in 0..(w * h) as usize {
+            src[i * 4] = (i * 3 % 256) as u8;
+            src[i * 4 + 1] = (i * 5 % 256) as u8;
+            src[i * 4 + 2] = (i * 7 % 256) as u8;
+            src[i * 4 + 3] = 255;
+        }
+        let ident = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0];
+        let out = warp_affine_rgba_replicate(&src, w, h, &ident, w, h);
+        assert_eq!(out, src);
+    }
+
+    #[test]
+    fn warp_replicate_clamps_border_instead_of_zero() {
+        // 4x1 row; shift content right by one (M = [1,0,+1; 0,1,0] samples
+        // src[x-1]): the leftmost pixel has no source — zero-border gives 0,
+        // replicate repeats the edge pixel.
+        let src = vec![10, 0, 0, 255, 20, 0, 0, 255, 30, 0, 0, 255, 40, 0, 0, 255];
+        let m = [1.0, 0.0, 1.0, 0.0, 1.0, 0.0];
+        let zero = warp_affine_rgba(&src, 4, 1, &m, 4, 1);
+        assert_eq!(zero[0], 0);
+        let rep = warp_affine_rgba_replicate(&src, 4, 1, &m, 4, 1);
+        assert_eq!(rep[0], 10);
+        assert_eq!(rep[4], 10);
+        assert_eq!(rep[8], 20);
+        assert_eq!(rep[12], 30);
     }
 
     #[test]

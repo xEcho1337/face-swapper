@@ -96,6 +96,34 @@ pub fn warp_rgba_bicubic_js(
     ))
 }
 
+/// Bilinear `warpAffine`-equivalent on RGBA bytes with replicate border —
+/// the Deep-Live-Cam paste-back combination
+/// (`cv2.warpAffine(..., INTER_LINEAR, BORDER_REPLICATE)`).
+#[wasm_bindgen(js_name = warpRgbaReplicate)]
+pub fn warp_rgba_replicate_js(
+    src: &[u8],
+    sw: u32,
+    sh: u32,
+    m: &[f32],
+    dw: u32,
+    dh: u32,
+) -> Result<Vec<u8>, JsValue> {
+    if m.len() != 6 {
+        return Err(JsValue::from_str("warpRgbaReplicate: need 6 floats"));
+    }
+    if src.len() != (sw * sh * 4) as usize {
+        return Err(JsValue::from_str("warpRgbaReplicate: src length mismatch"));
+    }
+    Ok(image::warp_affine_rgba_replicate(
+        src,
+        sw,
+        sh,
+        &[m[0], m[1], m[2], m[3], m[4], m[5]],
+        dw,
+        dh,
+    ))
+}
+
 /// Letterbox geometry: returns `[new_w, new_h, det_scale]`.
 #[wasm_bindgen(js_name = letterboxGeometry)]
 pub fn letterbox_geometry_js(src_w: u32, src_h: u32, dst_w: u32, dst_h: u32) -> Vec<f32> {

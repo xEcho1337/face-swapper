@@ -67,6 +67,27 @@
       "role": "Last-initializer projection (512x512 row-major) extracted once from YOUR licensed inswapper_128 copy.",
       "format": "{shape:[512,512], data:[262144 floats]}",
       "tool": "python3 tools/extract_emap.py public/models/inswapper_128.onnx public/models/inswapper_128.emap.json"
+    },
+    "swapper_reswapper256": {
+      "path": "reswapper_256-1567500.onnx",
+      "remote": "https://huggingface.co/somanchiu/reswapper/resolve/main/reswapper_256-1567500_originalInswapperClassCompatible.onnx",
+      "sha256": "a87d3cbe281037133f1be765d14e164fe071e55fe2488887b789c39cc59cecd6",
+      "emap": "reswapper_256.emap.json",
+      "role": "Identity-conditioned face swap, 256x256 (ReSwapper 256, inswapper-compatible contract at 256).",
+      "inputImage": { "dtype": "float32", "shape": [1, 3, 256, 256], "preprocessing": "256px norm_crop2, RGB, x/255" },
+      "inputLatent": { "dtype": "float32", "shape": [1, 512], "derivation": "normalize(normed_embedding @ emap)" },
+      "output": { "dtype": "float32", "shape": [1, 3, 256, 256], "range": "[0,1] RGB" },
+      "license": "AGPL-3.0 (somanchiu/ReSwapper, code + weights). Copyleft: weights installed separately by the operator, never bundled; preserve license notices. See MODELS.md.",
+      "provenance": "Author-released ONNX (originalInswapperClassCompatible, step 1567500). Contract verified 2026-09-08: inputs target [1,3,256,256] + source [1,512]; output symbolic [1,3,256,256]; 65 initializers, last float32 [512,512].",
+      "expectedSizeMB": "~554",
+      "backend": "WebGPU strongly recommended; WASM works but is slow",
+      "expectedMemoryMB": "~1500"
+    },
+    "emap_reswapper256": {
+      "path": "reswapper_256.emap.json",
+      "role": "Last-initializer projection (512x512 row-major) extracted once from YOUR reswapper_256 copy.",
+      "format": "{shape:[512,512], data:[262144 floats]}",
+      "tool": "python3 tools/extract_emap.py public/models/reswapper_256-1567500.onnx public/models/reswapper_256.emap.json"
     }
   }
 }

@@ -86,6 +86,16 @@ redistributable ones).
   app automatically falls back to WASM (still 100% local, ~1–2 s/face on a
   modern laptop CPU).
 
+### Higher-resolution option: ReSwapper 256 (`reswapper_256-1567500.onnx`)
+
+Same author, same AGPL-3.0 terms, same inswapper-compatible contract at
+256px (verified 2026-09-08: inputs `target [1,3,256,256]` + `source [1,512]`,
+output symbolic `[1,3,256,256]`, 65 initializers, last float32 `[512,512]`).
+Install as `public/models/reswapper_256-1567500.onnx` plus
+`public/models/reswapper_256.emap.json` (same `extract_emap.py`), then pick
+"ReSwapper 256" in the UI. 4x the pixels of the 128 models for the face
+region; slower on WASM, WebGPU recommended.
+
 ### Gated alternative: InsightFace `inswapper_128.onnx`
 
 Same tensor contract (verified: inputs `target`/`source`, output `output`,
