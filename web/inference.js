@@ -328,7 +328,9 @@ async function loadManifest() {
   if (state.manifest) return state.manifest;
   let res;
   try {
-    res = await fetch(`${state.config.modelBase}/manifest.json`);
+    // Bypass the browser HTTP cache: a stale manifest (old file list) breaks
+    // model selection after redeploys. Tiny file, revalidated per visit.
+    res = await fetch(`${state.config.modelBase}/manifest.json`, { cache: 'no-cache' });
   } catch (e) {
     fail('Model loading failed', `Could not fetch manifest.json from ${state.config.modelBase}: ${shortErr(e)}`, e);
   }

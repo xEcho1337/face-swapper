@@ -49,7 +49,10 @@
     },
     "swapper_inswapper": {
       "path": "inswapper_128.onnx",
-      "remote": "https://github.com/deepinsight/insightface/releases/download/model-zoo/inswapper_128.onnx",
+      "remotes": [
+        "https://huggingface.co/thebiglaskowski/inswapper_128.onnx/resolve/main/inswapper_128.onnx",
+        "https://github.com/deepinsight/insightface/releases/download/model-zoo/inswapper_128.onnx"
+      ],
       "sha256": "e4a3f08c753cb72d04e10aa0f7dbe3deebbf39567d4ead6dce08e98aa49e16af",
       "emap": "inswapper_128.emap.json",
       "role": "InsightFace inswapper_128 (license-gated, stronger identity transfer 0.84-0.96).",
